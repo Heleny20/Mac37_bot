@@ -1,4 +1,7 @@
-const SYSTEM_PROMPT = `Ты — методист и навигатор проективных практик в Telegram-боте, работающий в парадигме психосинергетики и системы метафорических ассоциативных карт (колода «МАК37»).
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+var SYSTEM_PROMPT = `Ты — методист и навигатор проективных практик в Telegram-боте, работающий в парадигме психосинергетики и системы метафорических ассоциативных карт (колода «МАК37»).
 
 Твоя задача: принять описание проблемной ситуации клиента, при необходимости задать 1–2 точных уточняющих вопроса, чтобы отделить факты от эмоций, и перевести запрос в чёткую исследовательскую задачу для самостоятельного расклада: один вопрос-вовне и несколько вопросов-вовнутрь.
 
@@ -17,50 +20,39 @@ const SYSTEM_PROMPT = `Ты — методист и навигатор прое�
 В конце одной строкой предложи выбрать один вопрос-вовнутрь, вытянуть карту из «МАК37» и при желании написать сюда, что выпало.
 Шаг 3. Если клиент прислал выпавшую карту и ассоциации — сначала структурируй его собственные образы без директивных трактовок, затем помоги перевести инсайт в одно простое действие на ближайшие 24 часа.`;
 
-export default {
+var worker_default = {
   async fetch(request, env) {
     if (request.method !== "POST") return new Response("OK");
-
     try {
       const update = await request.json();
-
-      // Обработка нажатия на кнопку "Я подписался"
       if (update.callback_query) {
         const cb = update.callback_query;
-        const userId = cb.from.id;
-        const chatId = cb.message.chat.id;
-
+        const userId2 = cb.from.id;
+        const chatId2 = cb.message.chat.id;
         if (cb.data === "check_sub") {
-          const isMember = await checkSubscription(env.BOT_TOKEN, env.CHANNEL_ID, userId);
+          const isMember = await checkSubscription(env.BOT_TOKEN, env.CHANNEL_ID, userId2);
           await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ callback_query_id: cb.id })
           });
-
           if (isMember) {
-            await sendTelegram(env.BOT_TOKEN, chatId, "Доступ открыт. Опишите ситуацию или дилемму, с которой вы хотите поработать через «МАК37».\n\n(Чтобы начать новый разбор с чистого листа в любой момент, отправьте команду /reset)");
+            await sendTelegram(env.BOT_TOKEN, chatId2, "Доступ открыт. Опишите ситуацию или дилемму, с которой вы хотите поработать через «МАК37».\n\n(Чтобы начать новый разбор с чистого листа в любой момент, отправьте команду /reset)");
           } else {
-            await sendTelegram(env.BOT_TOKEN, chatId, "Подписка пока не найдена. Пожалуйста, подпишитесь на канал и нажмите кнопку проверки ещё раз.");
+            await sendTelegram(env.BOT_TOKEN, chatId2, "Подписка пока не найдена. Пожалуйста, подпишитесь на канал и нажмите кнопку проверки ещё раз.");
           }
         }
         return new Response("OK");
       }
-
       if (!update.message || !update.message.text) return new Response("OK");
-
       const chatId = update.message.chat.id;
       const userId = update.message.from.id;
       const userText = update.message.text.trim();
-
-      // 1. Проверка подписки на канал перед любым действием
       const isSubscribed = await checkSubscription(env.BOT_TOKEN, env.CHANNEL_ID, userId);
       if (!isSubscribed) {
         await sendSubscriptionPrompt(env.BOT_TOKEN, chatId, env.CHANNEL_LINK);
         return new Response("OK");
       }
-
-      // 2. Команды управления диалогом
       if (userText === "/start") {
         await env.CHAT_HISTORY.delete(String(chatId));
         await sendTelegram(
@@ -70,52 +62,69 @@ export default {
         );
         return new Response("OK");
       }
-
       if (userText === "/reset") {
         await env.CHAT_HISTORY.delete(String(chatId));
         await sendTelegram(env.BOT_TOKEN, chatId, "Контекст очищен. Опишите новую ситуацию для разбора.");
         return new Response("OK");
       }
-
-      // 3. Загрузка истории диалога из Cloudflare KV
       let history = [];
       const saved = await env.CHAT_HISTORY.get(String(chatId));
       if (saved) history = JSON.parse(saved);
-
       history.push({ role: "user", parts: [{ text: userText }] });
       if (history.length > 10) history = history.slice(-10);
 
-      // 4. Запрос к Gemini API
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${env.GEMINI_API_KEY.trim()}`,
-        {
+      // Запрос к Gemini API с автоматическим повтором при перегрузке
+      let geminiData = null;
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+      const payload = JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: history,
+        generationConfig: { temperature: 0.4 }
+      });
+
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const geminiRes = await fetch(apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: history,
-            generationConfig: { temperature: 0.4 }
-          })
-        }
-      );
+          body: payload
+        });
+        geminiData = await geminiRes.json();
 
-      const geminiData = await geminiRes.json();
-      if (geminiData.error) {
-        await sendTelegram(env.BOT_TOKEN, chatId, `Ошибка API: ${geminiData.error.message}`);
+        const errMsg = geminiData?.error?.message || "";
+        const errCode = geminiData?.error?.code;
+        if ((errCode === 503 || errCode === 429 || errMsg.includes("high demand")) && attempt === 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        break;
+      }
+
+      if (geminiData?.error) {
+        const errCode = geminiData.error.code;
+        const errMsg = geminiData.error.message || "";
+        if (errCode === 503 || errCode === 429 || errMsg.includes("high demand")) {
+          await sendTelegram(
+            env.BOT_TOKEN,
+            chatId,
+            "Сейчас серверы нейросети временно перегружены. Пожалуйста, отправьте ваше сообщение ещё раз через 10–15 секунд."
+          );
+        } else {
+          await sendTelegram(
+            env.BOT_TOKEN,
+            chatId,
+            "Произошёл временный технический сбой при обработке запроса. Попробуйте повторить сообщение через минуту."
+          );
+        }
         return new Response("OK");
       }
 
-      const reply = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "Пустой ответ от модели.";
-
-      // Сохраняем ответ в историю
+      const reply = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "Не удалось сформировать ответ. Попробуйте переформулировать запрос.";
       history.push({ role: "model", parts: [{ text: reply }] });
       await env.CHAT_HISTORY.put(String(chatId), JSON.stringify(history), { expirationTtl: 86400 });
-
       await sendTelegram(env.BOT_TOKEN, chatId, reply);
     } catch (e) {
       console.error(e);
     }
-
     return new Response("OK");
   }
 };
@@ -127,6 +136,7 @@ async function checkSubscription(botToken, channelId, userId) {
   const status = data.result.status;
   return ["creator", "administrator", "member"].includes(status);
 }
+__name(checkSubscription, "checkSubscription");
 
 async function sendSubscriptionPrompt(botToken, chatId, channelLink) {
   await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -144,6 +154,7 @@ async function sendSubscriptionPrompt(botToken, chatId, channelLink) {
     })
   });
 }
+__name(sendSubscriptionPrompt, "sendSubscriptionPrompt");
 
 async function sendTelegram(botToken, chatId, text) {
   await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -151,8 +162,13 @@ async function sendTelegram(botToken, chatId, text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: text,
+      text,
       parse_mode: "Markdown"
     })
   });
 }
+__name(sendTelegram, "sendTelegram");
+
+export {
+  worker_default as default
+};
