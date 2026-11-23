@@ -87,7 +87,7 @@ export default {
 
       // 4. Запрос к Gemini API
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -100,7 +100,12 @@ export default {
       );
 
       const geminiData = await geminiRes.json();
-      const reply = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "Не удалось обработать запрос. Попробуйте переформулировать.";
+      if (geminiData.error) {
+        await sendTelegram(env.BOT_TOKEN, chatId, `Ошибка API: ${geminiData.error.message}`);
+        return new Response("OK");
+      }
+
+      const reply = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "Пустой ответ от модели.";
 
       // Сохраняем ответ в историю
       history.push({ role: "model", parts: [{ text: reply }] });
