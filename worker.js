@@ -72,7 +72,7 @@ var worker_default = {
           env.BOT_TOKEN,
           chatId,
           "*Как работать с навигатором «МАК37»*\n\n" +
-          "Карты здесь — не оракул, а проективный резонатор: они помогают обойти привычный логический автопилот и увидеть слепые зоны.\n\n" +
+          "Карты здесь — не оракул, а проективный резонатор: они помогают обойти привычное логическое мышление и увидеть слепые зоны.\n\n" +
           "*1. Опишите ситуацию*\n" +
           "Напишите, в чём заключается ваша дилемма. Если контекста не хватает, бот задаст 1–2 уточняющих вопроса.\n\n" +
           "*2. Разделите внешнее и внутреннее*\n" +
@@ -91,48 +91,48 @@ var worker_default = {
       history.push({ role: "user", parts: [{ text: userText }] });
       if (history.length > 10) history = history.slice(-10);
 
-      // Запрос к Gemini API с автоматическим переключением на резервную модель при перегрузке
-      const models = ["gemini-3.8-flash", "gemini-3.8-flash-lite"];
+      // Каскад из 3 подтверждённых моделей вашего аккаунта
+      const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemma-4-31b-it"];
       let geminiData = null;
-      const payload = JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: history,
-        generationConfig: { temperature: 0.4 }
-      });
 
       for (const model of models) {
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+        
+        let bodyObj;
+        if (model.startsWith("gemma")) {
+          const gemmaContents = JSON.parse(JSON.stringify(history));
+          gemmaContents[0].parts[0].text = `[Инструкция системы:\n${SYSTEM_PROMPT}\n]\n\nЗапрос пользователя: ${gemmaContents[0].parts[0].text}`;
+          bodyObj = {
+            contents: gemmaContents,
+            generationConfig: { temperature: 0.4 }
+          };
+        } else {
+          bodyObj = {
+            system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: history,
+            generationConfig: { temperature: 0.4 }
+          };
+        }
+
         const geminiRes = await fetch(apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: payload
+          body: JSON.stringify(bodyObj)
         });
         geminiData = await geminiRes.json();
 
-        const errMsg = geminiData?.error?.message || "";
-        const errCode = geminiData?.error?.code;
-        if (errCode === 503 || errCode === 429 || errMsg.includes("high demand") || errMsg.includes("not found")) {
+        if (geminiData?.error) {
           continue;
         }
         break;
       }
 
       if (geminiData?.error) {
-        const errCode = geminiData.error.code;
-        const errMsg = geminiData.error.message || "";
-        if (errCode === 503 || errCode === 429 || errMsg.includes("high demand")) {
-          await sendTelegram(
-            env.BOT_TOKEN,
-            chatId,
-            "Сейчас серверы нейросети временно перегружены. Пожалуйста, отправьте ваше сообщение ещё раз через 10–15 секунд."
-          );
-        } else {
-          await sendTelegram(
-            env.BOT_TOKEN,
-            chatId,
-            "Произошёл временный технический сбой при обработке запроса. Попробуйте повторить сообщение через минуту."
-          );
-        }
+        await sendTelegram(
+          env.BOT_TOKEN,
+          chatId,
+          "Сейчас серверы нейросети временно перегружены. Пожалуйста, отправьте ваше сообщение ещё раз через 10–15 секунд."
+        );
         return new Response("OK");
       }
 
