@@ -73,16 +73,17 @@ var worker_default = {
       history.push({ role: "user", parts: [{ text: userText }] });
       if (history.length > 10) history = history.slice(-10);
 
-      // Запрос к Gemini API с автоматическим повтором при перегрузке
+      // Запрос к Gemini API с автоматическим переключением на резервную модель при перегрузке
+      const models = ["gemini-3.8-flash", "gemini-3.8-flash-lite"];
       let geminiData = null;
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
       const payload = JSON.stringify({
         system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
         contents: history,
         generationConfig: { temperature: 0.4 }
       });
 
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (const model of models) {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
         const geminiRes = await fetch(apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -92,8 +93,8 @@ var worker_default = {
 
         const errMsg = geminiData?.error?.message || "";
         const errCode = geminiData?.error?.code;
-        if ((errCode === 503 || errCode === 429 || errMsg.includes("high demand")) && attempt === 1) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        // Если первая модель перегружена — сразу пробуем вторую (lite) без задержки
+        if (errCode === 503 || errCode === 429 || errMsg.includes("high demand") || errMsg.includes("not found")) {
           continue;
         }
         break;
